@@ -18,7 +18,7 @@ A tool for extracting, translating lyrics and generating synchronized subtitles 
 
 2. **Running the Application**:
   ```bash
-  python -m web.py
+  uvicorn web:app --reload
   ```
   The application will start a FastAPI server that can be accessed through your browser.
 
