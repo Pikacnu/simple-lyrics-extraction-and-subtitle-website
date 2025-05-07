@@ -1,0 +1,604 @@
+<!DOCTYPE html>
+<html lang="zh-tw">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>音頻播放器與字幕</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      margin: 0;
+      padding: 0;
+      position: relative;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      background-color: beige;
+    }
+
+    h1 {
+      text-align: center;
+    }
+
+    .player-container {
+      margin: 20px 0;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    audio {
+      width: 100%;
+    }
+
+    .subtitle-container {
+      height: 100%;
+      overflow-y: auto;
+      border: 1px solid #ddd;
+      overflow-x: hidden;
+      flex-grow: 1;
+      max-width: 90vw;
+      position: relative;
+    }
+
+    .subtitle {
+      margin-bottom: 10px;
+      padding: 5px;
+      margin-left: 10px;
+      border-radius: 4px;
+      transition: all 0.3s ease;
+    }
+
+    .subtitle.active {
+      background-color: #e6f7ff;
+      font-weight: bold;
+      font-size: 1.2em;
+      transform: scale(1.05);
+    }
+
+    .file-input {
+      margin: 20px 0;
+    }
+
+    .controls {
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      align-items: center;
+      justify-items: center;
+      margin: 10px 0;
+      gap: 10px;
+    }
+
+    .controls>* {
+      direction: rtl;
+      writing-mode: vertical-rl;
+    }
+
+    .timestamp {
+      color: #6666666c;
+      font-size: 0.8em;
+    }
+
+    .word {
+      display: inline-block;
+      padding: 0 2px;
+      border-radius: 3px;
+      transition: background-color 0.2s ease;
+      cursor: pointer;
+    }
+
+    .word.active {
+      background-color: #ffff00;
+      /* 黃色背景 */
+      font-weight: bold;
+      /* 粗體字 */
+    }
+
+    .container {
+      display: flex;
+      flex-direction: row-reverse;
+      align-items: center;
+      width: 100%;
+      height: 95%;
+    }
+
+    .controls-container {
+      display: flex;
+      flex-direction: column;
+      max-width: 20vw;
+      height: 100%;
+      padding: 10px;
+      border-right: 1px solid #ddd;
+      position: relative;
+      flex-wrap: wrap;
+      overflow: hidden;
+    }
+
+    #seekBar {
+      all: unset;
+      appearance: none;
+      writing-mode: vertical-rl;
+      direction: rtl;
+      vertical-align: bottom;
+      background: #000;
+      height: 90vh;
+      width: 10px;
+      margin-top: 10px;
+      border-radius: 100000px;
+    }
+
+    .subtitle.active>.timestamp {
+      font-size: 0;
+      padding-left: 20px;
+    }
+
+    .file-input {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      margin-bottom: 10px;
+      writing-mode: vertical-rl;
+      direction: rtl;
+    }
+
+    .file-input[hidden] {
+      display: none;
+    }
+  </style>
+</head>
+
+<body>
+  <div class="container">
+    <div class="controls-container">
+      <div class="file-input" hidden>
+        <div>
+          <label for="audioFile">選擇音頻文件:</label>
+          <input type="file" id="audioFile" accept="audio/*">
+        </div>
+        <div>
+          <label for="jsonFile">選擇字幕JSON文件:</label>
+          <input type="file" id="jsonFile" accept=".json">
+        </div>
+        <!--
+          <input type="text" id="youtubeUrl" placeholder="請輸入YouTube網址">
+          <button id="loadBtn">載入</button>
+        -->
+      </div>
+
+      <div class="player-container">
+        <audio id="audioPlayer" hidden preload="metadata"></audio>
+        <div class="controls">
+          <button class="skip" value="-10">
+            >> </button>
+          <button class="skip" value="-5">
+            > </button>
+          <button id="playPauseBtn">播放</button>
+          <button class="skip" value="5">
+            < </button>
+              <button class="skip" value="10">
+                << </button>
+                  <span>
+                    <span id="maxTime" hidden>00:00:00</span>
+                    <span hidden>/</span>
+                    <span id="currentTime">00:00:00</span>
+
+                  </span>
+                  <input type="text" id="youtubeUrl" placeholder="請輸入YouTube網址">
+                  <button id="loadBtn">載入</button>
+        </div>
+        <input type="range" id="seekBar" value="0" min="0" max="100" step="1">
+      </div>
+    </div>
+
+    <div class="subtitle-container" id="subtitleContainer"></div>
+  </div>
+
+  <script>
+    document.addEventListener('DOMContentLoaded', function () {
+      const audioPlayer = document.getElementById('audioPlayer');
+      const audioFileInput = document.getElementById('audioFile');
+      const jsonFileInput = document.getElementById('jsonFile');
+      const subtitleContainer = document.getElementById('subtitleContainer');
+      const playPauseBtn = document.getElementById('playPauseBtn');
+      const currentTimeDisplay = document.getElementById('currentTime');
+      const maxTimeDisplay = document.getElementById('maxTime');
+      const seekBar = document.getElementById('seekBar');
+
+      const youtubeUrlInput = document.getElementById('youtubeUrl');
+      const loadBtn = document.getElementById('loadBtn');
+
+      const skipButtons = document.querySelectorAll('.skip');
+
+      let websocket = null;
+      let subtitles = [];
+      let activeSubtitle = null;
+
+      skipButtons.forEach(button => {
+        button.addEventListener('click', function () {
+          const skipValue = parseFloat(this.value);
+          audioPlayer.currentTime += skipValue;
+        });
+      });
+
+      youtubeUrlInput.addEventListener('input', function () {
+        const url = youtubeUrlInput.value;
+        if (url) {
+          loadBtn.disabled = false;
+        } else {
+          loadBtn.disabled = true;
+        }
+      });
+
+      loadBtn.addEventListener('click', function () {
+        const url = youtubeUrlInput.value.trim();
+        if (url && url.startsWith('http') && RegExp(/^(https:\/\/)?(music\.)?youtube\.com\/watch\?v=([a-zA-Z0-9-_]{11}).*/).test(url)) {
+          websocket.send(JSON.stringify({ type: 'link', payload: url }));
+          return;
+        }
+        alert('請輸入有效的YouTube網址');
+      });
+
+      function websocketHandler(event) {
+        /*
+          {
+            type:string,
+            payload: string | object,
+          }
+        */
+        const data = JSON.parse(event.data);
+        if (data.type === 'lyrics') {
+          const lyricsData = JSON.parse(data.payload);
+          processSubtitles(lyricsData);
+          const lastTime = lyricsData.segments[lyricsData.segments.length - 1].end;
+          if (seekBar.max < lastTime) {
+            seekBar.max = lastTime;
+          }
+
+        } else if (data.type === 'audio') {
+          audioPlayer.src = data.payload;
+        } else if (data.type === 'error') {
+          console.error('WebSocket錯誤:', data.payload);
+        } else {
+          console.warn('未知的WebSocket消息類型:', data.type);
+        }
+      }
+
+      function getWebsocket() {
+        if (websocket) {
+          return websocket;
+        } else {
+          websocket = new WebSocket(`ws://${window.location.host}/api/ws`);
+          websocket.onopen = function () {
+            console.log('WebSocket已連接');
+          };
+          websocket.onclose = function () {
+            console.log('WebSocket已關閉');
+            websocket = null;
+            setTimeout(() => {
+              getWebsocket();
+              if (!websocket) {
+                setTimeout(() => getWebsocket(), 1000); // 1秒後重新連接
+              }
+            }, 1000); // 1秒後重新連接
+          };
+          websocket.onerror = function (error) {
+            console.error('WebSocket錯誤:', error);
+          };
+          websocket.onmessage = function (event) {
+            websocketHandler(event);
+          };
+          return websocket;
+        }
+      }
+
+      getWebsocket();
+
+      // 載入音頻文件
+      audioFileInput.addEventListener('change', function (e) {
+        const file = e.target.files[0];
+        if (file) {
+          const audioUrl = URL.createObjectURL(file);
+          audioPlayer.src = audioUrl;
+          audioPlayer.pause();
+          audioPlayer.currentTime = 0;
+          seekBar.value = 0;
+          seekBar.max = Math.floor(audioPlayer.duration || 0);
+          audioPlayer.addEventListener('loadedmetadata', function () {
+            console.log(audioPlayer.duration);
+            seekBar.max = Math.floor(audioPlayer.duration || 0);
+            maxTimeDisplay.textContent = formatTime(audioPlayer.duration || 0);
+            currentTimeDisplay.textContent = formatTime(0);
+          });
+          playPauseBtn.textContent = '播放';
+        }
+      });
+
+      audioPlayer.addEventListener('ended', function () {
+        playPauseBtn.textContent = '播放';
+      });
+      audioPlayer.addEventListener('play', function () {
+        playPauseBtn.textContent = '暫停';
+      });
+      audioPlayer.addEventListener('pause', function () {
+        playPauseBtn.textContent = '播放';
+      });
+
+      audioPlayer.addEventListener('timeupdate', function () {
+        seekBar.value = Math.floor(audioPlayer.currentTime || 0);
+      });
+
+      // 載入JSON字幕文件
+      jsonFileInput.addEventListener('change', function (e) {
+        const file = e.target.files[0];
+        if (file) {
+          const reader = new FileReader();
+          reader.onload = function (event) {
+            try {
+              const data = JSON.parse(event.target.result);
+              processSubtitles(data);
+            } catch (error) {
+              console.error('JSON解析錯誤:', error);
+              alert('無法解析JSON文件');
+            }
+          };
+          reader.readAsText(file);
+        }
+      });
+
+      // 處理字幕數據
+      function processSubtitles(data) {
+        if (data.segments && Array.isArray(data.segments)) {
+          subtitles = data.segments.map(segment => {
+            // 處理單字級別的時間信息
+            let words = [];
+            if (segment.words && Array.isArray(segment.words)) {
+              words = segment.words.map(word => {
+                return {
+                  text: word.word,
+                  start: word.start,
+                  end: word.end,
+                  probability: word.probability || 0
+                };
+              });
+            }
+
+            return {
+              start: segment.start,
+              end: segment.end,
+              text: segment.text,
+              id: 'subtitle-' + segment.start,
+              words: words
+            };
+          });
+          renderSubtitles();
+        } else if (data.text && data.segments) {
+          // 兼容不同格式的JSON
+          subtitles = data.segments.map(segment => {
+            // 處理單字級別的時間信息
+            let words = [];
+            if (segment.words && Array.isArray(segment.words)) {
+              words = segment.words.map(word => {
+                return {
+                  text: word.word,
+                  start: word.start,
+                  end: word.end,
+                  probability: word.probability || 0
+                };
+              });
+            }
+
+            return {
+              start: segment.start,
+              end: segment.end,
+              text: segment.text,
+              id: 'subtitle-' + segment.start,
+              words: words
+            };
+          });
+          renderSubtitles();
+        } else {
+          console.error('無效的字幕數據格式');
+          alert('無效的字幕數據格式');
+        }
+      }
+
+      // 渲染字幕到頁面
+      function renderSubtitles() {
+        subtitleContainer.innerHTML = '';
+        subtitles.forEach(subtitle => {
+          const div = document.createElement('div');
+          div.id = subtitle.id;
+          div.className = 'subtitle';
+
+          // 添加時間戳
+
+          const timestamp = document.createElement('span');
+          timestamp.className = 'timestamp';
+          timestamp.textContent = `[${formatTime(subtitle.start)} - ${formatTime(subtitle.end)}]`;
+          div.appendChild(timestamp);
+
+
+          // 如果有單字級別的數據，則逐字渲染
+          if (subtitle.words && subtitle.words.length > 0) {
+            const textSpan = document.createElement('span');
+            textSpan.className = 'text';
+
+            subtitle.words.forEach(word => {
+              const wordSpan = document.createElement('span');
+              wordSpan.className = 'word';
+              wordSpan.dataset.start = word.start;
+              wordSpan.dataset.end = word.end;
+              wordSpan.textContent = word.text;
+              textSpan.appendChild(wordSpan);
+
+              wordSpan.addEventListener('click', async (e) => {
+                e.stopPropagation(); // 防止事件冒泡到父元素
+                audioPlayer.currentTime = word.start;
+                if (audioPlayer.paused) {
+                  audioPlayer.play();
+                }
+              });
+            });
+
+            div.appendChild(textSpan);
+          } else {
+            // 如果沒有單字級別的數據，則使用整個文本
+            const textSpan = document.createElement('span');
+            textSpan.className = 'text';
+            textSpan.textContent = subtitle.text;
+            div.appendChild(textSpan);
+          }
+
+          div.addEventListener('click', () => {
+            audioPlayer.currentTime = subtitle.start;
+            audioPlayer.play();
+          });
+          subtitleContainer.appendChild(div);
+        });
+      }
+
+      // 格式化時間為 HH:MM:SS 格式
+      function formatTime(seconds) {
+        const h = Math.floor(seconds / 3600);
+        const m = Math.floor((seconds % 3600) / 60);
+        const s = Math.floor(seconds % 60);
+        return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+      }
+
+      let cacheSubtitle = null;
+
+      // 更新當前時間顯示
+      audioPlayer.addEventListener('timeupdate', function () {
+        const currentTime = audioPlayer.currentTime;
+        currentTimeDisplay.textContent = formatTime(currentTime);
+
+
+        const current = subtitles.find(subtitle =>
+          currentTime >= subtitle.start && currentTime <= subtitle.end
+        );
+        if (current && current.id !== cacheSubtitle) {
+          cacheSubtitle = current.id;
+          const element = document.getElementById(current.id);
+          if (element) {
+            element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          }
+        }
+        // 更新活動字幕
+        updateActiveSubtitle(currentTime);
+
+        // 更新活動單字
+        updateActiveWord(currentTime);
+      });
+
+      seekBar.addEventListener('input', function () {
+        const seekTime = parseFloat(seekBar.value);
+        audioPlayer.currentTime = seekTime;
+      });
+
+      // 更新當前活動字幕
+      function updateActiveSubtitle(currentTime) {
+        // 移除之前的活動狀態
+        if (activeSubtitle) {
+          const prevActive = document.getElementById(activeSubtitle);
+          if (prevActive) {
+            prevActive.classList.remove('active');
+          }
+        }
+
+        // 查找當前時間對應的字幕
+        const current = subtitles.find(subtitle =>
+          currentTime >= subtitle.start && currentTime <= subtitle.end
+        );
+
+        if (current) {
+          activeSubtitle = current.id;
+          const element = document.getElementById(activeSubtitle);
+          if (element) {
+            element.classList.add('active');
+            //element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          }
+        } else {
+          activeSubtitle = null;
+        }
+      }
+
+      // 更新當前活動單字
+      function updateActiveWord(currentTime) {
+        // 先移除所有活動單字的高亮
+        document.querySelectorAll('.word.active').forEach(word => {
+          word.classList.remove('active');
+        });
+
+        // 查找當前活動字幕
+        const currentSubtitle = subtitles.find(subtitle =>
+          currentTime >= subtitle.start && currentTime <= subtitle.end
+        );
+
+        if (currentSubtitle && currentSubtitle.words && currentSubtitle.words.length > 0) {
+          // 查找當前時間對應的單字
+          const currentWord = currentSubtitle.words.find(word =>
+            currentTime >= word.start && currentTime <= word.end
+          );
+
+          if (currentWord) {
+            // 找到對應的 DOM 元素並高亮
+            const subtitleElement = document.getElementById(currentSubtitle.id);
+            if (subtitleElement) {
+              const wordElements = subtitleElement.querySelectorAll('.word');
+
+              // 找到與當前單字時間匹配的元素
+              wordElements.forEach(wordElement => {
+                const start = parseFloat(wordElement.dataset.start);
+                const end = parseFloat(wordElement.dataset.end);
+
+                if (currentTime >= start && currentTime <= end) {
+                  wordElement.classList.add('active');
+                }
+              });
+            }
+          }
+        }
+      }
+
+      // 播放/暫停按鈕功能
+      playPauseBtn.addEventListener('click', async function () {
+        if (audioPlayer.paused) {
+          await audioPlayer.play();
+        } else {
+          await audioPlayer.pause();
+        }
+      });
+
+      // 從URL參數加載文件
+      function loadFromUrl() {
+        const params = new URLSearchParams(window.location.search);
+        const jsonParam = params.get('json');
+        const audioParam = params.get('audio');
+
+        if (jsonParam) {
+          fetch(jsonParam)
+            .then(response => response.json())
+            .then(data => {
+              processSubtitles(data);
+            })
+            .catch(error => {
+              console.error('無法加載JSON文件:', error);
+            });
+        }
+
+        if (audioParam) {
+          audioPlayer.src = audioParam;
+        }
+      }
+
+      // 啟動時檢查URL參數
+      loadFromUrl();
+    });
+  </script>
+</body>
+
+</html>
