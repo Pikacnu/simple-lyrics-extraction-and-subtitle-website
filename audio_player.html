@@ -39,7 +39,7 @@
       border: 1px solid #ddd;
       overflow-x: hidden;
       flex-grow: 1;
-      max-width: 90vw;
+      max-width: 80vw;
       position: relative;
     }
 
@@ -121,7 +121,7 @@
       all: unset;
       appearance: none;
       writing-mode: vertical-rl;
-      direction: rtl;
+      direction: ltr;
       vertical-align: bottom;
       background: #000;
       height: 90vh;
@@ -148,10 +148,52 @@
     .file-input[hidden] {
       display: none;
     }
+
+
+    /* Add this to your existing style section */
+    .loading-indicator {
+      display: none;
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background-color: rgba(0, 0, 0, 0.5);
+      z-index: 1000;
+      justify-content: center;
+      align-items: center;
+      color: white;
+      flex-direction: column;
+    }
+
+    .spinner {
+      border: 4px solid rgba(255, 255, 255, 0.3);
+      border-radius: 50%;
+      border-top: 4px solid white;
+      width: 40px;
+      height: 40px;
+      animation: spin 1s linear infinite;
+      margin-bottom: 10px;
+    }
+
+    @keyframes spin {
+      0% {
+        transform: rotate(0deg);
+      }
+
+      100% {
+        transform: rotate(360deg);
+      }
+    }
   </style>
+
 </head>
 
 <body>
+  <div class="loading-indicator" id="loadingIndicator">
+    <div class="spinner"></div>
+    <div>加載中...</div>
+  </div>
   <div class="container">
     <div class="controls-container">
       <div class="file-input" hidden>
@@ -250,8 +292,9 @@
           }
         */
         const data = JSON.parse(event.data);
+        console.log('WebSocket消息:', data);
         if (data.type === 'lyrics') {
-          const lyricsData = JSON.parse(data.payload);
+          const lyricsData = data.payload;
           processSubtitles(lyricsData);
           const lastTime = lyricsData.segments[lyricsData.segments.length - 1].end;
           if (seekBar.max < lastTime) {
